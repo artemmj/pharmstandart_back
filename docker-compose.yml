@@ -1,0 +1,64 @@
+version: "3"
+services:
+  db:
+    image: postgres:12.4-alpine
+    container_name: pharm_standard_back__db
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:5-alpine
+    container_name: pharm_standard_back__redis
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./volumes/redis/data:/data
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    image: pharm_standard_back__app
+    container_name: pharm_standard_back__app
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./project:/app
+      - ./volumes/media:/media
+      - ./volumes/static:/static
+    depends_on:
+      - db
+      - redis
+    command: gunicorn --bind 0.0.0.0:8000 --timeout 600 --log-level debug --reload --workers 4 apps.wsgi:application
+
+  celery:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    image: pharm_standard_back__celery
+    container_name: pharm_standard_back__celery
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./project:/app
+      - ./volumes/media:/media
+      - ./volumes/static:/static
+    depends_on:
+      - db
+      - redis
+    command: celery worker -A apps -l info -B -c 4
+
+  nginx:
+    image: nginx:1.15.7-alpine
+    container_name: pharm_standard_back__nginx
+    restart: always
+    volumes:
+      - ./docker/nginx/:/etc/nginx/conf.d
+      - ./volumes/static:/var/www/static
+      - ./volumes/media:/var/www/media
+    depends_on:
+      - app
+    ports:
+      - "8000:80"

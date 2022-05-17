@@ -1,0 +1,83 @@
+version: "3"
+services:
+  db:
+    image: postgres:12.4-alpine
+    container_name: ${CI_PROJECT_NAME}_db
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:5-alpine
+    container_name: ${CI_PROJECT_NAME}_redis
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./volumes/redis/data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5 
+
+  app:
+    image: ${CI_REGISTRY_IMAGE}:${TAG}
+    container_name: ${CI_PROJECT_NAME}_app
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - ./volumes/media:/media
+      - ./volumes/static:/static
+      - /etc/pki/libvirt:/ssl_key
+    depends_on:
+      - db
+      - redis
+    command: gunicorn --bind 0.0.0.0:8000 --timeout 600 --log-level debug --reload --workers 4 apps.wsgi:application
+    healthcheck:
+      test: ["CMD-SHELL", "wget -O /dev/null http://localhost:8000/api/v1/settings || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5 
+
+  celery:
+    image: ${CI_REGISTRY_IMAGE}:${TAG}
+    container_name: ${CI_PROJECT_NAME}_celery 
+    env_file: docker/.dockerenv
+    restart: always
+    volumes:
+      - /etc/pki/libvirt:/ssl_key
+      - ./volumes/media:/media
+      - ./volumes/static:/static
+    depends_on:
+      - db
+      - redis
+    command: celery worker -A apps -l info -B -c 4
+    healthcheck:
+      test: ["CMD-SHELL", "celery inspect ping -A apps"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  nginx:
+    image: nginx:1.15.7-alpine
+    container_name: ${CI_PROJECT_NAME}_nginx
+    restart: always
+    volumes:
+      - ./docker/nginx:/etc/nginx/conf.d
+      - ./volumes/static:/var/www/static
+      - ./volumes/media:/var/www/media
+    depends_on:
+      - app
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -O /dev/null http://localhost/basic_status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
